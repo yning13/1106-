@@ -1,0 +1,102 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+// Collection path: users/{userId}/items/{itemId}
+// Each document is one schedule event, scheduled task, or to-do item.
+// Fields (all required):
+//   id: string, matches the document ID, 1-80 safe characters, immutable.
+//   uid: string, must match the path userId and authenticated UID, immutable.
+//   type: string, one of event, task, todo.
+//   title: string, 1-80 characters.
+//   date: string, YYYY-MM-DD.
+//   time/end: string, empty or HH:MM in 24-hour time.
+//   notes: string, at most 280 characters.
+//   repeat/done: boolean.
+//   stepsDone: integer, 0-10000; stepsTotal: integer, 1-10000.
+//   priority: string, normal, high, or low.
+//   color: string, purple or green.
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function uidUnchanged(userId) {
+      return request.resource.data.uid == userId;
+    }
+
+    function uidNotModified(userId) {
+      return resource.data.uid == userId &&
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(data, fields) {
+      return data.keys().hasOnly(fields);
+    }
+
+    function isValidTime(value) {
+      return value is string &&
+        (value == '' || value.matches('^([01]\\d|2[0-3]):[0-5]\\d$'));
+    }
+
+    function isValidItem(data, itemId, userId) {
+      return hasRequiredFields(data, [
+          'id', 'uid', 'type', 'title', 'date', 'time', 'end', 'notes',
+          'repeat', 'done', 'stepsDone', 'stepsTotal', 'priority', 'color'
+        ]) &&
+        hasOnlyAllowedFields(data, [
+          'id', 'uid', 'type', 'title', 'date', 'time', 'end', 'notes',
+          'repeat', 'done', 'stepsDone', 'stepsTotal', 'priority', 'color'
+        ]) &&
+        data.id is string && data.id == itemId &&
+        data.id.matches('^[A-Za-z0-9_-]{1,80}$') &&
+        data.uid is string && data.uid.size() <= 128 && data.uid == userId &&
+        data.type in ['event', 'task', 'todo'] &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 80 &&
+        data.date is string && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$') &&
+        isValidTime(data.time) && isValidTime(data.end) &&
+        data.notes is string && data.notes.size() <= 280 &&
+        data.repeat is bool && data.done is bool &&
+        data.stepsDone is int && data.stepsDone >= 0 && data.stepsDone <= 10000 &&
+        data.stepsTotal is int && data.stepsTotal >= 1 && data.stepsTotal <= 10000 &&
+        data.stepsDone <= data.stepsTotal &&
+        data.done == (data.type != 'event' && data.stepsDone == data.stepsTotal) &&
+        data.priority in ['normal', 'high', 'low'] &&
+        data.color in ['purple', 'green'] &&
+        (data.type != 'todo' || (data.time == '' && data.end == '' && !data.repeat)) &&
+        (data.type != 'event' || (!data.done && data.stepsDone == 0 && data.stepsTotal == 1)) &&
+        (data.type != 'task' || data.time != '');
+    }
+
+    match /users/{userId}/items/{itemId} {
+      // A user can only list and read items stored under their own UID.
+      allow get, list: if isOwner(userId);
+
+      // Validate the full document on both creates and updates.
+      allow create: if isOwner(userId) && uidUnchanged(userId) &&
+        isValidItem(request.resource.data, itemId, userId);
+      allow update: if isOwner(userId) && uidNotModified(userId) &&
+        isValidItem(request.resource.data, itemId, userId);
+
+      // Deletion is limited to the item's owner.
+      allow delete: if isOwner(userId) && resource.data.uid == userId;
+    }
+
+    // Deny all other collections and document paths.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
