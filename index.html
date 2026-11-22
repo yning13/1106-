@@ -114,7 +114,7 @@ $('#tabs').onclick=e=>{let b=e.target.closest('[data-type]');if(!b)return;type=b
 只回傳純 JSON，不要加任何其他文字。`;
 
     try{
-      const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+      const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
       const res=await fetch(url,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
